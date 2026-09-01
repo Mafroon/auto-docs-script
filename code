@@ -1,0 +1,230 @@
+' ========================================================================================
+' Модуль: GenerateVentilationDocs
+' Назначение: Автоматическая генерация технологических инструкций для вытяжных систем
+' Дата: 20-03-2025
+' ========================================================================================
+
+Option Explicit
+
+' ----------------------------------------------------------------------------------------
+' Основная процедура
+' ----------------------------------------------------------------------------------------
+Sub GenerateVytDocuments()
+
+    ' Объекты Word (позднее связывание)
+    Dim wdApp As Object
+    Dim wdDoc As Object
+
+    ' Рабочий лист
+    Dim ws As Worksheet
+    Dim lastRow As Long, i As Long
+
+    ' Пути
+    Dim templatePath As String
+    Dim saveFolder As String
+    Dim fileName As String
+    Dim fullPath As String
+
+    ' Словарь
+    Dim dict As Object
+    Dim marker As Variant
+
+    ' Тип системы
+    Dim typeSystem As String
+
+    ' Логи
+    Dim processedCount As Long
+    Dim errorLog As String
+    Dim logFile As String
+
+    ' --- Инициализация путей ---
+    templatePath = "C:\Users\Elen\Desktop\проба\Шаблон (вытяжная).docx"
+    saveFolder = ThisWorkbook.Path & "\Сгенерированные документы\"
+    If Dir(saveFolder, vbDirectory) = "" Then MkDir saveFolder
+    logFile = ThisWorkbook.Path & "\error_log.txt"
+
+    ' --- Лист с данными ---
+    Set ws = ThisWorkbook.Worksheets("Исходные данные")
+    lastRow = ws.Cells(ws.Rows.Count, "C").End(xlUp).Row
+
+    ' --- Запуск Word (позднее связывание) ---
+    On Error Resume Next
+    Set wdApp = GetObject(, "Word.Application")
+    If wdApp Is Nothing Then
+        Set wdApp = CreateObject("Word.Application")
+    End If
+    On Error GoTo 0
+
+    ' Проверка успешности создания
+    If wdApp Is Nothing Then
+        MsgBox "Не удалось запустить Microsoft Word.", vbCritical
+        Exit Sub
+    End If
+
+    ' Работаем скрыто, без диалогов
+    wdApp.Visible = False
+    wdApp.DisplayAlerts = 0   ' wdAlertsNone
+
+    processedCount = 0
+    errorLog = ""
+
+    ' --- Цикл по строкам ---
+    For i = 2 To lastRow
+
+        If InStr(1, ws.Cells(i, "C").Value, "Вытяжная", vbTextCompare) > 0 Then
+
+            ' Проверка существования шаблона
+            If Not FileExists(templatePath) Then
+                errorLog = errorLog & "Строка " & i & ": шаблон не найден (" & templatePath & ")" & vbCrLf
+                GoTo NextRow
+            End If
+
+            ' Формирование имени файла
+            fileName = "(" & Trim(ws.Cells(i, "G").Text) & ") " & Trim(ws.Cells(i, "E").Text)
+            fileName = CleanFileName(fileName)
+            If Len(fileName) = 0 Then
+                errorLog = errorLog & "Строка " & i & ": пустое имя файла" & vbCrLf
+                GoTo NextRow
+            End If
+
+            fullPath = saveFolder & fileName & ".docx"
+            If Len(fullPath) > 250 Then
+                errorLog = errorLog & "Строка " & i & ": путь слишком длинный" & vbCrLf
+                GoTo NextRow
+            End If
+
+            ' Защита от дубликатов
+            Dim counter As Long
+            counter = 1
+            Dim basePath As String
+            basePath = saveFolder & fileName
+            Do While FileExists(fullPath)
+                fullPath = basePath & "_" & counter & ".docx"
+                counter = counter + 1
+            Loop
+
+            ' Открытие шаблона
+            On Error GoTo ErrorHandler
+            Set wdDoc = wdApp.Documents.Open( _
+                templatePath, _
+                ConfirmConversions:=False, _
+                ReadOnly:=False, _
+                AddToRecentFiles:=False, _
+                Visible:=False _
+            )
+
+            ' Словарь
+            Set dict = CreateObject("Scripting.Dictionary")
+
+            ' Тип системы
+            typeSystem = Trim(ws.Cells(i, "H").Text)
+            Select Case typeSystem
+                Case "раб."
+                    typeSystem = "Рабочая"
+                Case "раб./рез."
+                    typeSystem = "Рабочая / Резервная"
+            End Select
+
+            ' Заполнение словаря
+            dict.Add "mark", ws.Cells(i, "E").Text
+            dict.Add "sign", ws.Cells(i, "F").Text
+            dict.Add "type", typeSystem
+            dict.Add "location", ws.Cells(i, "B").Text
+            dict.Add "room", ws.Cells(i, "I").Text
+            dict.Add "length", ws.Cells(i, "J").Text
+            dict.Add "fan_type", ws.Cells(i, "K").Text
+            dict.Add "fan_performance", ws.Cells(i, "L").Text
+            dict.Add "engine_power", ws.Cells(i, "M").Text
+            dict.Add "engine_speed", ws.Cells(i, "N").Text
+            dict.Add "operating_mode", ws.Cells(i, "O").Text
+            dict.Add "system_startup", ws.Cells(i, "Q").Text
+
+            ' Замена меток
+            For Each marker In dict.Keys
+                ReplaceMarker wdDoc, "{{" & marker & "}}", dict(marker)
+            Next marker
+
+            ' Сохранение
+            wdDoc.SaveAs2 fullPath, 16   ' 16 = wdFormatDocumentDefault
+            wdDoc.Close False
+
+            processedCount = processedCount + 1
+            On Error GoTo 0
+        End If
+
+NextRow:
+    Next i
+
+    ' Закрываем Word
+    wdApp.DisplayAlerts = -1
+    wdApp.Quit False
+    Set wdApp = Nothing
+
+    ' Лог ошибок
+    If errorLog <> "" Then
+        Open logFile For Output As #1
+        Print #1, errorLog
+        Close #1
+        MsgBox "Завершено с ошибками. Создано файлов: " & processedCount & ". Подробности в файле: " & logFile
+    Else
+        MsgBox "Готово! Создано документов: " & processedCount
+    End If
+
+    Exit Sub
+
+ErrorHandler:
+    errorLog = errorLog & "Строка " & i & ": ошибка " & Err.Number & " - " & Err.Description & " (файл: " & fileName & ")" & vbCrLf
+    If Not wdDoc Is Nothing Then
+        wdDoc.Close False
+        Set wdDoc = Nothing
+    End If
+    On Error GoTo 0
+    Resume NextRow
+
+End Sub
+
+' ----------------------------------------------------------------------------------------
+' Замена маркера
+' ----------------------------------------------------------------------------------------
+Private Sub ReplaceMarker(wdDoc As Object, marker As String, newText As String)
+    With wdDoc.Content.Find
+        .ClearFormatting
+        .Replacement.ClearFormatting
+        .Text = marker
+        .Replacement.Text = newText
+        .Forward = True
+        .Wrap = 1
+        .Format = False
+        .MatchCase = False
+        .MatchWholeWord = False
+        .MatchWildcards = False
+        .MatchSoundsLike = False
+        .MatchAllWordForms = False
+        .Execute Replace:=2
+    End With
+End Sub
+
+' ----------------------------------------------------------------------------------------
+' Проверка существования файла
+' ----------------------------------------------------------------------------------------
+Private Function FileExists(filePath As String) As Boolean
+    FileExists = (Len(Dir(filePath)) > 0)
+End Function
+
+' ----------------------------------------------------------------------------------------
+' Очистка имени файла
+' ----------------------------------------------------------------------------------------
+Private Function CleanFileName(str As String) As String
+    Dim illegalChars As Variant
+    Dim i As Integer
+    illegalChars = Array("\", "/", ":", "*", "?", """", "<", ">", "|")
+    For i = LBound(illegalChars) To UBound(illegalChars)
+        str = Replace(str, illegalChars(i), "_")
+    Next i
+    str = Trim(str)
+    Do While Right(str, 1) = "."
+        str = Left(str, Len(str) - 1)
+    Loop
+    If Len(str) = 0 Or str = "_" Then str = "Без_имени"
+    CleanFileName = str
+End Function
