@@ -1,0 +1,26 @@
+# Сгенерированные документы и папки
+examples/generated/
+*.docx
+*.doc
+*.tmp
+~$*
+
+# Временные файлы VBA
+*.tmp
+*.log
+*.err
+
+# Резервные копии
+*.bak
+*.old
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Файлы, создаваемые Word/Excel при открытии
+~$*.docx
+~$*.xlsx
+*.wbk
+*.xlk
